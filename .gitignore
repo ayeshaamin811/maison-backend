@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+env/
+.venv/
+
+# Django
+db.sqlite3
+*.log
+.env
+
+# MEDIA_ROOT. The seed artwork is versioned at products/seed_assets/ and
+# copied in by migration 0004; everything else here is a runtime upload.
+/media/
+
+# Static files collected at build time
+staticfiles/
