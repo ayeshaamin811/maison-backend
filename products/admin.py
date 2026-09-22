@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
+from .forms import ProductAdminForm
 from .models import Collection, Edit, Fabric, Product, ProductImage
 
 
@@ -36,6 +37,7 @@ class ProductImageInline(admin.TabularInline):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
+    form = ProductAdminForm
     list_display = [
         'thumb',
         'name',
@@ -57,30 +59,53 @@ class ProductAdmin(admin.ModelAdmin):
     save_on_top = True
 
     fieldsets = [
-        (None, {'fields': ['name', 'sku', 'is_active', 'is_best_seller', 'stock']}),
-        ('Categorisation', {'fields': ['collection', 'fabric', 'edits']}),
+        (
+            'Product',
+            {
+                'fields': ['name', 'sku', 'collection', 'fabric', 'edits'],
+                'description': (
+                    'Collection is where the product lives (one only). '
+                    'Edits are the extra menus it should also appear in - '
+                    'tick as many as apply, or none.'
+                ),
+            },
+        ),
         (
             'Pricing',
             {
                 'fields': ['price', 'old_price', 'discount', 'reward_min', 'reward_max'],
                 'description': (
-                    'Enter plain numbers — the API formats them as '
-                    '<code>Rs.6,990.00</code> and <code>Rs. 280</code>. '
-                    'Leave old price / discount empty when there is no markdown.'
+                    'Plain numbers only - no "Rs." and no commas. The website '
+                    'adds those. Leave old price and discount empty when the '
+                    'product is not on sale.'
                 ),
             },
         ),
-        ('Card images', {'fields': ['image', 'hover_image']}),
+        (
+            'Images',
+            {
+                'fields': ['image', 'hover_image'],
+                'description': (
+                    'Image shows on the product card; hover image replaces it '
+                    'when the mouse is over the card. Extra gallery shots go '
+                    'at the bottom of this page.'
+                ),
+            },
+        ),
         (
             'Description',
             {
                 'fields': ['composition', 'shirt_detail', 'details', 'sizes'],
                 'description': (
-                    'Details and sizes are JSON lists, e.g. '
-                    '<code>["Fabric: Lawn", "Wash Care: Dry clean only"]</code> '
-                    'and <code>["XS", "S", "M", "L", "XL"]</code>.'
+                    'Composition and Shirt detail are one short line each, '
+                    'e.g. "2 Piece - Shirt &amp; Trouser" and "Printed Straight '
+                    'Shirt".'
                 ),
             },
+        ),
+        (
+            'Availability',
+            {'fields': ['stock', 'is_active', 'is_best_seller']},
         ),
     ]
 

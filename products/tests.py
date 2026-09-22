@@ -257,8 +257,8 @@ class AdminTests(TestCase):
                 'reward_max': '123',
                 'composition': '1 Piece - Shirt',
                 'shirt_detail': 'Test Shirt',
-                'details': '["Fabric: Lawn"]',
-                'sizes': '["S", "M"]',
+                'details': 'Fabric: Lawn\nWash Care: Machine wash cold',
+                'sizes': ['S', 'M'],
                 'gallery-TOTAL_FORMS': '0',
                 'gallery-INITIAL_FORMS': '0',
                 'gallery-MIN_NUM_FORMS': '0',
@@ -274,6 +274,12 @@ class AdminTests(TestCase):
         self.assertEqual(row['category'], ['casual', 'new-arrivals'])
         self.assertIsNone(row['oldPrice'])
         self.assertIsNone(row['discount'])
+        # Typed as plain lines and ticked boxes, stored as JSON lists.
+        self.assertEqual(
+            row['details'],
+            ['Fabric: Lawn', 'Wash Care: Machine wash cold'],
+        )
+        self.assertEqual(row['sizes'], ['S', 'M'])
 
 
 class StorageTests(TestCase):
@@ -366,3 +372,101 @@ class CategoryParamTests(TestCase):
         response = self.client.get(reverse('product-list') + '?category=nope')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['count'], 0)
+
+
+class AdminFormTests(TestCase):
+    """The admin must not require anyone to hand-write JSON."""
+
+    def setUp(self):
+        User.objects.create_superuser('staff', 'staff@example.com', 'pw')
+        self.client.force_login(User.objects.get(username='staff'))
+
+    def _payload(self, **overrides):
+        collection = Collection.objects.get(slug='casual')
+        payload = {
+            'name': 'Form Test Suit',
+            'sku': 'FORM-01',
+            'collection': collection.pk,
+            'fabric': '',
+            'edits': [],
+            'price': '1000.00',
+            'old_price': '',
+            'discount': '',
+            'reward_min': '',
+            'reward_max': '',
+            'composition': '2 Piece - Shirt & Trouser',
+            'shirt_detail': 'Printed Straight Shirt',
+            'details': 'Fabric: Cambric\nWash Care: Dry clean only',
+            'sizes': ['S', 'M', 'L'],
+            'stock': '5',
+            'is_active': 'on',
+            'gallery-TOTAL_FORMS': '0',
+            'gallery-INITIAL_FORMS': '0',
+            'gallery-MIN_NUM_FORMS': '0',
+            'gallery-MAX_NUM_FORMS': '1000',
+        }
+        payload.update(overrides)
+        return payload
+
+    def _post(self, **overrides):
+        with open('products/seed_assets/image-1.webp', 'rb') as handle:
+            artwork = SimpleUploadedFile(
+                'form-test.webp', handle.read(), content_type='image/webp'
+            )
+        return self.client.post(
+            '/admin/products/product/add/', self._payload(image=artwork, **overrides)
+        )
+
+    def test_details_typed_as_lines_become_a_json_list(self):
+        self.assertEqual(self._post().status_code, 302)
+        self.assertEqual(
+            Product.objects.get(sku='FORM-01').details,
+            ['Fabric: Cambric', 'Wash Care: Dry clean only'],
+        )
+
+    def test_sizes_ticked_as_checkboxes_become_a_json_list(self):
+        self.assertEqual(self._post().status_code, 302)
+        self.assertEqual(Product.objects.get(sku='FORM-01').sizes, ['S', 'M', 'L'])
+
+    def test_blank_lines_are_dropped(self):
+        self._post(details='Fabric: Lawn\n\n\nWash Care: Dry clean only\n')
+        self.assertEqual(
+            Product.objects.get(sku='FORM-01').details,
+            ['Fabric: Lawn', 'Wash Care: Dry clean only'],
+        )
+
+    def test_a_list_pasted_into_shirt_detail_is_rejected(self):
+        """The exact mistake that put a JSON array on the live product page."""
+        response = self._post(
+            shirt_detail='["Fabric: Cambric", "Wash Care: Dry clean only"]'
+        )
+        self.assertEqual(response.status_code, 200)  # redisplayed with an error
+        self.assertFalse(Product.objects.filter(sku='FORM-01').exists())
+        self.assertIn(
+            'shirt_detail', response.context['adminform'].form.errors
+        )
+
+    def test_a_list_pasted_into_composition_is_rejected(self):
+        response = self._post(composition='["2 Piece", "3 Piece"]')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('composition', response.context['adminform'].form.errors)
+
+    def test_edit_page_shows_details_as_plain_lines_not_json(self):
+        response = self.client.get('/admin/products/product/1/change/')
+        self.assertEqual(response.status_code, 200)
+        rendered = response.context['adminform'].form['details'].value()
+        self.assertEqual(
+            rendered,
+            'Fabric: Cambric\nWash Care: Dry clean only\n'
+            'Country of Origin: Pakistan',
+        )
+        self.assertNotIn('[', rendered)
+        self.assertNotIn('"', rendered)
+
+    def test_an_existing_size_outside_the_checkbox_list_still_saves(self):
+        product = Product.objects.get(pk=11)  # sizes == ["Unstitched"]
+        product.sizes = ['Made to Order']
+        product.save(update_fields=['sizes'])
+        response = self.client.get('/admin/products/product/11/change/')
+        choices = dict(response.context['adminform'].form.fields['sizes'].choices)
+        self.assertIn('Made to Order', choices)
