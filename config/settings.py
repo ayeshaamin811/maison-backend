@@ -221,18 +221,45 @@ CORS_ALLOWED_ORIGINS = env_list(
 )
 
 
-# Behind Railway's proxy, so trust its forwarded scheme.
+# HTTPS. Railway terminates TLS at its proxy and forwards the original
+# scheme, so Django has to be told to trust that header before it can tell an
+# HTTPS request from an HTTP one.
 
-if not DEBUG:
+# TESTING is excluded because the test client speaks plain HTTP: with the
+# redirect on, every request under test would 301 before reaching a view.
+if not DEBUG and not TESTING:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    # One year, matching the usual HSTS preload requirement. Only safe because
+    # every host this runs on is HTTPS-only.
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
 
 # Email
+#
+# Nothing sends mail yet - there is no auth or order flow - so this exists to
+# keep the deploy checks honest rather than to deliver anything. Console in
+# development; in production it points at whatever SMTP credentials are set,
+# and stays inert if none are.
 
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+if DEBUG:
+    MAILERS = {
+        'default': {'BACKEND': 'django.core.mail.backends.console.EmailBackend'},
+    }
+else:
+    MAILERS = {
+        'default': {
+            'BACKEND': 'django.core.mail.backends.smtp.EmailBackend',
+            'HOST': env('EMAIL_HOST', 'localhost'),
+            'PORT': int(env('EMAIL_PORT', '587')),
+            'USERNAME': env('EMAIL_HOST_USER'),
+            'PASSWORD': env('EMAIL_HOST_PASSWORD'),
+            'USE_TLS': env_bool('EMAIL_USE_TLS', True),
+        },
+    }
+
+DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', 'noreply@localhost')
