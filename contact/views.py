@@ -23,6 +23,17 @@ class ContactCreateView(CreateAPIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'contact'
 
+    def initial(self, request, *args, **kwargs):
+        # Temporary: the throttle counts per client identity, and behind a
+        # proxy that identity comes from X-Forwarded-For. Logging what
+        # actually arrives is the only way to know how many hops to trust.
+        logger.info(
+            'contact ident: xff=%r remote_addr=%r',
+            request.META.get('HTTP_X_FORWARDED_FOR'),
+            request.META.get('REMOTE_ADDR'),
+        )
+        super().initial(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
