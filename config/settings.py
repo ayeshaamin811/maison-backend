@@ -205,6 +205,33 @@ STORAGES = {
 }
 
 
+# Logging
+#
+# With DEBUG off, Django's default configuration routes request exceptions to
+# the mail_admins handler and nowhere else - so on a deploy with no ADMINS
+# configured, a 500 leaves no trace at all. Everything goes to stdout instead,
+# which is where the platform's log viewer reads from.
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'simple': {'format': '[{levelname}] {name}: {message}', 'style': '{'},
+    },
+    'handlers': {
+        'console': {'class': 'logging.StreamHandler', 'formatter': 'simple'},
+    },
+    'root': {'handlers': ['console'], 'level': env('LOG_LEVEL', 'INFO')},
+    'loggers': {
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+    },
+}
+
+
 # Django REST Framework
 
 REST_FRAMEWORK = {
