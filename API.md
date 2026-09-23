@@ -194,3 +194,89 @@ in this API on the next request. No deploy, no code change, no seed script.
 
 The 26 products currently in the database were ported from the frontend's old
 `src/data/products.jsx`, so the shape matches what the components already expect.
+
+---
+
+# Contact API
+
+## `POST /api/contact/`
+
+Submits the storefront contact form. Open to everyone, no auth. There is no
+`GET` — submissions are read in the Django admin.
+
+### Request
+
+camelCase keys, JSON or form-encoded. **Only `email` is required**; the other
+three may be empty strings or left out entirely. Whitespace is trimmed on every
+field before saving.
+
+```json
+{
+  "firstName": "Ayesha",
+  "lastName": "Khan",
+  "email": "ayesha@example.com",
+  "message": "Do you restock the black cambric suit?"
+}
+```
+
+| Field | Required | Limit |
+| --- | --- | --- |
+| `firstName` | no | 100 chars |
+| `lastName` | no | 100 chars |
+| `email` | **yes** | must be a valid address |
+| `message` | no | 5000 chars |
+
+### Success — 201
+
+```json
+{ "success": true, "message": "Thanks! We'll get back to you soon." }
+```
+
+### Validation error — 400
+
+```json
+{ "errors": { "email": ["Enter a valid email address."] } }
+```
+
+`errors` is always an object of field name → array of strings, keyed by the
+camelCase name that was sent, so each message can be rendered under its own
+input. Several fields can fail at once:
+
+```json
+{ "errors": {
+    "email": ["Enter a valid email address."],
+    "message": ["Ensure this field has no more than 5000 characters."]
+} }
+```
+
+A message over 5000 characters is rejected, never silently truncated.
+
+### Rate limited — 429
+
+Five submissions per IP per hour. The sixth returns:
+
+```json
+{ "detail": "Request was throttled. Expected available in 3598 seconds." }
+```
+
+Note this is DRF's standard throttle body — `detail`, not `errors` — because it
+is not a per-field problem. A `Retry-After` header carries the seconds to wait.
+Show it as a form-level message rather than under an input.
+
+Invalid submissions count towards the limit too, so the quota cannot be
+sidestepped by posting junk.
+
+### Example
+
+```js
+const res = await fetch(`${API_BASE}/contact/`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ firstName, lastName, email, message }),
+});
+const body = await res.json();
+
+if (res.status === 201) showSuccess(body.message);
+else if (res.status === 429) showFormError(body.detail);
+else setFieldErrors(body.errors);   // { email: ["..."], ... }
+```

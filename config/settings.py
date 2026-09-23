@@ -71,6 +71,7 @@ INSTALLED_APPS = [
     'storages',
 
     'products',
+    'contact',
 ]
 
 MIDDLEWARE = [
@@ -210,6 +211,27 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny'],
     'DEFAULT_PAGINATION_CLASS': 'products.pagination.ProductPagination',
     'PAGE_SIZE': 24,
+    'DEFAULT_THROTTLE_CLASSES': [],
+    'DEFAULT_THROTTLE_RATES': {
+        # Applied only where a view opts in with throttle_scope.
+        'contact': '5/hour',
+    },
+}
+
+
+# Cache
+#
+# This backs DRF's throttling, so it has to be shared. The default local-memory
+# cache lives inside a single process, and gunicorn runs several workers - the
+# contact form's 5/hour would quietly become 5/hour per worker. The database
+# cache is consistent across workers and survives a restart, and needs no extra
+# service. `manage.py createcachetable` creates its table and is idempotent.
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'django_cache',
+    }
 }
 
 
@@ -241,25 +263,36 @@ if not DEBUG and not TESTING:
 
 # Email
 #
-# Nothing sends mail yet - there is no auth or order flow - so this exists to
-# keep the deploy checks honest rather than to deliver anything. Console in
-# development; in production it points at whatever SMTP credentials are set,
-# and stays inert if none are.
+# SMTP when EMAIL_HOST is configured, console otherwise - including in
+# production. That is deliberate: the contact form notification is the only
+# mail this project sends, and printing it to the deploy log is better than
+# failing to send it while nobody has wired up a mail provider. Django's
+# deploy check flags a console backend in production, so it is silenced here
+# rather than left to be ignored every time the checks run.
 
-if DEBUG:
-    MAILERS = {
-        'default': {'BACKEND': 'django.core.mail.backends.console.EmailBackend'},
-    }
-else:
+# Lowercase on purpose: an uppercase EMAIL_HOST would register as the
+# deprecated Django setting, which 6.1 refuses to accept alongside MAILERS.
+_smtp_host = env('EMAIL_HOST')
+
+if _smtp_host:
     MAILERS = {
         'default': {
             'BACKEND': 'django.core.mail.backends.smtp.EmailBackend',
-            'HOST': env('EMAIL_HOST', 'localhost'),
+            'HOST': _smtp_host,
             'PORT': int(env('EMAIL_PORT', '587')),
             'USERNAME': env('EMAIL_HOST_USER'),
             'PASSWORD': env('EMAIL_HOST_PASSWORD'),
             'USE_TLS': env_bool('EMAIL_USE_TLS', True),
         },
     }
+else:
+    MAILERS = {
+        'default': {'BACKEND': 'django.core.mail.backends.console.EmailBackend'},
+    }
+    SILENCED_SYSTEM_CHECKS = ['mail.E001']
 
 DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', 'noreply@localhost')
+
+# Where contact-form submissions are announced. Empty means no notification is
+# attempted; the message is still saved either way.
+CONTACT_NOTIFY_EMAIL = env('CONTACT_NOTIFY_EMAIL')
