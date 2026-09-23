@@ -24,6 +24,9 @@ VALID = {
 # otherwise inherit the previous test's counter.
 NO_THROTTLE = {'DEFAULT_THROTTLE_RATES': {'contact': None}}
 THROTTLED = {'DEFAULT_THROTTLE_RATES': {'contact': '5/hour'}}
+# Mirrors production: two proxy hops, so the client is read from
+# X-Forwarded-For rather than from the connecting address.
+PROXIED = {'DEFAULT_THROTTLE_RATES': {'contact': '5/hour'}, 'NUM_PROXIES': 2}
 
 
 @override_settings(REST_FRAMEWORK=NO_THROTTLE)
@@ -301,3 +304,76 @@ class ContactAdminTests(TestCase):
         self.assertEqual(
             self.client.get('/admin/contact/contactmessage/add/').status_code, 403
         )
+
+
+class ProxiedThrottleTests(TestCase):
+    """The throttle has to survive a proxy whose own address keeps changing.
+
+    Railway forwards `X-Forwarded-For: <client>, <edge>` and rotates the edge
+    address between requests. With no NUM_PROXIES configured, DRF keys the
+    throttle off the whole chain, so every request looks like a new client and
+    a per-IP limit never counts past one - which is exactly how this shipped
+    and passed a full local suite.
+    """
+
+    CLIENT = '72.255.51.58'
+
+    def setUp(self):
+        cache.clear()
+        self.url = reverse('contact-create')
+
+    def tearDown(self):
+        cache.clear()
+
+    def _post(self, edge):
+        return self.client.post(
+            self.url,
+            {'email': 'a@x.com'},
+            content_type='application/json',
+            HTTP_X_FORWARDED_FOR='{}, {}'.format(self.CLIENT, edge),
+        )
+
+    @override_settings(REST_FRAMEWORK=PROXIED)
+    def test_one_client_is_limited_though_the_edge_address_rotates(self):
+        for i in range(5):
+            response = self._post('152.233.33.{}'.format(160 + i))
+            self.assertEqual(response.status_code, 201, 'post {} rejected'.format(i))
+
+        self.assertEqual(self._post('152.233.33.199').status_code, 429)
+
+    @override_settings(REST_FRAMEWORK=PROXIED)
+    def test_a_different_client_is_unaffected(self):
+        for i in range(5):
+            self._post('152.233.33.{}'.format(160 + i))
+
+        other = self.client.post(
+            self.url,
+            {'email': 'other@x.com'},
+            content_type='application/json',
+            HTTP_X_FORWARDED_FOR='203.0.113.9, 152.233.33.170',
+        )
+        self.assertEqual(other.status_code, 201)
+
+    @override_settings(REST_FRAMEWORK=PROXIED)
+    def test_a_spoofed_leading_entry_cannot_dodge_the_limit(self):
+        """A client-supplied X-Forwarded-For is prepended, not trusted.
+
+        The proxy appends the address it actually saw, so the entry counted
+        from the right stays the real one however much the caller invents.
+        """
+        for i in range(5):
+            self.client.post(
+                self.url,
+                {'email': 'a@x.com'},
+                content_type='application/json',
+                HTTP_X_FORWARDED_FOR='9.9.9.{}, {}, 152.233.33.160'.format(
+                    i, self.CLIENT
+                ),
+            )
+        blocked = self.client.post(
+            self.url,
+            {'email': 'a@x.com'},
+            content_type='application/json',
+            HTTP_X_FORWARDED_FOR='9.9.9.99, {}, 152.233.33.161'.format(self.CLIENT),
+        )
+        self.assertEqual(blocked.status_code, 429)

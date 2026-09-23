@@ -243,6 +243,15 @@ REST_FRAMEWORK = {
         # Applied only where a view opts in with throttle_scope.
         'contact': '5/hour',
     },
+    # How many proxy hops sit in front of the app, so throttling can tell one
+    # client from another. Railway sends X-Forwarded-For as
+    # "<client>, <edge>", and the edge address differs request to request -
+    # left unset, DRF keys off the whole chain and every request looks like a
+    # new client, so a per-IP limit never counts past one. Two hops means the
+    # client is the second entry from the right, which is the stable one.
+    # Locally there is no X-Forwarded-For and DRF falls back to REMOTE_ADDR,
+    # so this is correct there too.
+    'NUM_PROXIES': int(env('NUM_PROXIES', '2')),
 }
 
 
